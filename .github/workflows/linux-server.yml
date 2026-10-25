@@ -1,0 +1,36 @@
+name: Linux server
+
+# Builds the static aarch64 server for postmarketOS devices and attaches it,
+# with its SHA-256, to the GitHub release of the pushed tag.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build static aarch64 server
+        run: server-linux/build-static.sh server-linux/out
+        env:
+          CONTAINER_RUNTIME: docker
+
+      - name: Check the binary
+        working-directory: server-linux/out
+        run: |
+          file scrcpy-server-linux-aarch64 | tee /dev/stderr \
+            | grep -q 'ARM aarch64.*statically linked'
+          sha256sum scrcpy-server-linux-aarch64 | tee scrcpy-server-linux-aarch64.sha256
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            server-linux/out/scrcpy-server-linux-aarch64
+            server-linux/out/scrcpy-server-linux-aarch64.sha256

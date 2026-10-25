@@ -83,6 +83,43 @@ Note that USB debugging is not required to run scrcpy in [OTG mode](doc/otg.md).
  - [macOS](doc/macos.md)
 
 
+## postmarketOS (Linux) devices
+
+This fork can also mirror and control a postmarketOS phone (aarch64, Wayland
+compositor with `wlr-screencopy`). The client detects the device OS over adb
+(`/system/framework` present means Android) and, for Linux devices, pushes a
+native static server to `/data/local/tmp/scrcpy-server-linux-aarch64` instead
+of the Java server, and runs it directly.
+
+```bash
+scrcpy -s <serial>        # same options as for Android
+```
+
+Video (H.264) and touch/keyboard input (via uinput) are supported. Audio is
+not captured, and Android-only options (`--video-source=camera`, `--list-*`,
+`--no-video`) are refused with an error.
+
+The client looks for the server in this order:
+
+1. `$SCRCPY_LINUX_SERVER_PATH`;
+2. `<prefix>/share/scrcpy/scrcpy-server-linux-aarch64` (installed next to the
+   Java server; set `-Dlinux_server_prebuilt=<path>` at configure time);
+3. a cache in `$XDG_CACHE_HOME/scrcpy` (default `~/.cache/scrcpy`), otherwise
+   it is downloaded from the fork's GitHub releases over HTTPS (needs `curl`)
+   and its SHA-256 is checked against the value compiled into the client
+   (`-Dlinux_server_sha256`, `-Dlinux_server_url`). A file that does not match
+   is rejected.
+
+Set `SCRCPY_DEVICE_OS=auto|android|linux` to override the detection.
+
+To build the server yourself (needs podman or docker):
+
+```bash
+server-linux/build-static.sh        # writes server-linux/out/
+```
+
+Pushing a `v*` tag builds it in CI and attaches it to the release.
+
 ## Must-know tips
 
  - [Reducing resolution](doc/video.md#size) may greatly improve performance
