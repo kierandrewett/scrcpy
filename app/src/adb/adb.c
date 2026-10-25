@@ -758,3 +758,53 @@ sc_adb_get_device_sdk_version(struct sc_intr *intr, const char *serial) {
 
     return value;
 }
+
+bool
+sc_adb_chmod(struct sc_intr *intr, const char *serial, const char *remote,
+             const char *mode, unsigned flags) {
+    assert(serial);
+    const char *const argv[] =
+        SC_ADB_COMMAND("-s", serial, "shell", "chmod", mode, remote);
+
+    sc_pid pid = sc_adb_execute(argv, flags);
+    return process_check_success_intr(intr, pid, "adb chmod", flags);
+}
+
+enum sc_device_os
+sc_adb_get_device_os(struct sc_intr *intr, const char *serial) {
+    assert(serial);
+    // Android always ships /system/framework; other Linux userspaces do not
+    const char *const argv[] =
+        SC_ADB_COMMAND("-s", serial, "shell",
+                       "test -d /system/framework && echo android || echo linux");
+
+    sc_pipe pout;
+    sc_pid pid = sc_adb_execute_p(argv, SC_ADB_SILENT, &pout);
+    if (pid == SC_PROCESS_NONE) {
+        LOGW("Could not execute \"adb shell\" to detect device OS");
+        return SC_DEVICE_OS_ANDROID;
+    }
+
+    char buf[32];
+    ssize_t r = sc_pipe_read_all_intr(intr, pid, pout, buf, sizeof(buf) - 1);
+    sc_pipe_close(pout);
+
+    bool ok = process_check_success_intr(intr, pid, "adb shell", SC_ADB_SILENT);
+    if (!ok || r <= 0) {
+        LOGW("Could not detect device OS, assuming Android");
+        return SC_DEVICE_OS_ANDROID;
+    }
+
+    assert((size_t) r < sizeof(buf));
+    buf[r] = '\0';
+    size_t len = strcspn(buf, " \r\n");
+    buf[len] = '\0';
+
+    if (!strcmp(buf, "linux")) {
+        return SC_DEVICE_OS_LINUX;
+    }
+    if (strcmp(buf, "android")) {
+        LOGW("Unexpected device OS probe result \"%s\", assuming Android", buf);
+    }
+    return SC_DEVICE_OS_ANDROID;
+}

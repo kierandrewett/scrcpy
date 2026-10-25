@@ -126,4 +126,29 @@ sc_adb_get_device_ip(struct sc_intr *intr, const char *serial, unsigned flags);
 uint16_t
 sc_adb_get_device_sdk_version(struct sc_intr *intr, const char *serial);
 
+/**
+ * The operating system running on a device
+ */
+enum sc_device_os {
+    SC_DEVICE_OS_ANDROID,
+    SC_DEVICE_OS_LINUX,
+};
+
+/**
+ * Detect the operating system running on the device
+ *
+ * Android always provides /system/framework, so its absence identifies a
+ * Linux device (postmarketOS). Unknown results fall back to Android, which is
+ * the historical behavior.
+ */
+enum sc_device_os
+sc_adb_get_device_os(struct sc_intr *intr, const char *serial);
+
+/**
+ * Execute `adb shell chmod <mode> <remote>`
+ */
+bool
+sc_adb_chmod(struct sc_intr *intr, const char *serial, const char *remote,
+             const char *mode, unsigned flags);
+
 #endif
