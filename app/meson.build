@@ -22,6 +22,7 @@ src = [
     'src/frame_buffer.c',
     'src/input_manager.c',
     'src/keyboard_sdk.c',
+    'src/linux_server.c',
     'src/mouse_capture.c',
     'src/mouse_sdk.c',
     'src/opengl.c',
@@ -171,6 +172,11 @@ conf.set_quoted('PREFIX', get_option('prefix'))
 # build a "portable" version (with scrcpy-server accessible from the same
 # directory as the executable)
 conf.set('PORTABLE', get_option('portable'))
+
+# the native Linux server downloaded for non-Android devices when it is not
+# available locally; the hash must match the file served from the URL
+conf.set_quoted('LINUX_SERVER_URL', get_option('linux_server_url'))
+conf.set_quoted('LINUX_SERVER_SHA256', get_option('linux_server_sha256'))
 
 # the default client TCP port range for the "adb reverse" tunnel
 # overridden by option --port

@@ -24,6 +24,21 @@ else
                   install_dir: 'share/scrcpy')
 endif
 
+# The native Linux server (postmarketOS devices) is optional: when no prebuilt
+# path is given, the client downloads it at runtime (see linux_server.c).
+linux_server_prebuilt = get_option('linux_server_prebuilt')
+if linux_server_prebuilt != ''
+    if not linux_server_prebuilt.startswith('/')
+        linux_server_prebuilt = '../' + linux_server_prebuilt
+    endif
+    custom_target('scrcpy-server-linux-prebuilt',
+                  input: linux_server_prebuilt,
+                  output: 'scrcpy-server-linux-aarch64',
+                  command: ['cp', '@INPUT@', '@OUTPUT@'],
+                  install: true,
+                  install_dir: 'share/scrcpy')
+endif
+
 if meson.version().version_compare('>= 0.58.0')
        devenv = environment()
        devenv.set('SCRCPY_SERVER_PATH', meson.current_build_dir() / 'scrcpy-server')
