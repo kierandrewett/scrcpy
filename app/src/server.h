@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "adb/adb.h"
 #include "adb/adb_tunnel.h"
 #include "options.h"
 #include "util/intr.h"
@@ -84,6 +85,8 @@ struct sc_server {
     struct sc_server_params params;
     char *serial;
     char *device_socket_name;
+    // Detected once per session; selects the server binary and launch mode
+    enum sc_device_os device_os;
 
     sc_thread thread;
     struct sc_server_info info; // initialized once connected

@@ -8,6 +8,7 @@
 #include <sys/types.h>
 
 #include "adb/adb.h"
+#include "linux_server.h"
 #include "util/env.h"
 #include "util/file.h"
 #include "util/log.h"
@@ -19,6 +20,7 @@
 
 #define SC_SERVER_PATH_DEFAULT PREFIX "/share/scrcpy/" SC_SERVER_FILENAME
 #define SC_DEVICE_SERVER_PATH "/data/local/tmp/scrcpy-server.jar"
+#define SC_DEVICE_LINUX_SERVER_PATH "/data/local/tmp/scrcpy-server-linux-aarch64"
 
 #define SC_ADB_PORT_DEFAULT 5555
 #define SC_SOCKET_NAME_PREFIX "scrcpy_"
@@ -54,7 +56,7 @@ get_server_path(void) {
 }
 
 static bool
-push_server(struct sc_intr *intr, const char *serial) {
+push_android_server(struct sc_intr *intr, const char *serial) {
     char *server_path = get_server_path();
     if (!server_path) {
         return false;
@@ -67,6 +69,55 @@ push_server(struct sc_intr *intr, const char *serial) {
     bool ok = sc_adb_push(intr, serial, server_path, SC_DEVICE_SERVER_PATH, 0);
     free(server_path);
     return ok;
+}
+
+static bool
+push_linux_server(struct sc_intr *intr, const char *serial) {
+    char *server_path = sc_linux_server_get_path(intr);
+    if (!server_path) {
+        return false;
+    }
+    bool ok = sc_adb_push(intr, serial, server_path,
+                          SC_DEVICE_LINUX_SERVER_PATH, 0);
+    free(server_path);
+    if (!ok) {
+        return false;
+    }
+    // adb push does not keep the executable bit
+    return sc_adb_chmod(intr, serial, SC_DEVICE_LINUX_SERVER_PATH, "755", 0);
+}
+
+static bool
+push_server(struct sc_intr *intr, const char *serial,
+            enum sc_device_os device_os) {
+    if (device_os == SC_DEVICE_OS_LINUX) {
+        return push_linux_server(intr, serial);
+    }
+    return push_android_server(intr, serial);
+}
+
+// Detect the device OS, unless SCRCPY_DEVICE_OS is set to android or linux
+static bool
+sc_server_detect_device_os(struct sc_server *server, const char *serial) {
+    char *value = sc_get_env("SCRCPY_DEVICE_OS");
+    if (!value || !value[0] || !strcmp(value, "auto")) {
+        free(value);
+        server->device_os = sc_adb_get_device_os(&server->intr, serial);
+    } else if (!strcmp(value, "android")) {
+        free(value);
+        server->device_os = SC_DEVICE_OS_ANDROID;
+    } else if (!strcmp(value, "linux")) {
+        free(value);
+        server->device_os = SC_DEVICE_OS_LINUX;
+    } else {
+        LOGE("Invalid SCRCPY_DEVICE_OS '%s' (expected auto, android or linux)",
+             value);
+        free(value);
+        return false;
+    }
+    LOGD("Device OS: %s",
+         server->device_os == SC_DEVICE_OS_LINUX ? "linux" : "android");
+    return true;
 }
 
 static const char *
@@ -219,37 +270,51 @@ execute_server(struct sc_server *server,
     cmd[count++] = "-s";
     cmd[count++] = serial;
     cmd[count++] = "shell";
-    cmd[count++] = "CLASSPATH=" SC_DEVICE_SERVER_PATH;
-    cmd[count++] = "app_process";
+
+    bool is_linux = server->device_os == SC_DEVICE_OS_LINUX;
+    if (is_linux) {
+        // The native server is a standalone executable pushed by the client:
+        // there is no app_process, classpath or class name
+        cmd[count++] = SC_DEVICE_LINUX_SERVER_PATH;
+    } else {
+        cmd[count++] = "CLASSPATH=" SC_DEVICE_SERVER_PATH;
+        cmd[count++] = "app_process";
+    }
 
 #ifdef SERVER_DEBUGGER
-    uint16_t sdk_version = sc_adb_get_device_sdk_version(&server->intr, serial);
-    if (!sdk_version) {
-        LOGE("Could not determine SDK version");
-        return 0;
-    }
+    // The JDWP debugger is a JVM option, it does not apply to the native server
+    if (!is_linux) {
+        uint16_t sdk_version =
+            sc_adb_get_device_sdk_version(&server->intr, serial);
+        if (!sdk_version) {
+            LOGE("Could not determine SDK version");
+            return 0;
+        }
 
 # define SERVER_DEBUGGER_PORT "5005"
-    const char *dbg;
-    if (sdk_version < 28) {
-        // Android < 9
-        dbg = "-agentlib:jdwp=transport=dt_socket,suspend=y,server=y,address="
-              SERVER_DEBUGGER_PORT;
-    } else if (sdk_version < 30) {
-        // Android >= 9 && Android < 11
-        dbg = "-XjdwpProvider:internal -XjdwpOptions:transport=dt_socket,"
-              "suspend=y,server=y,address=" SERVER_DEBUGGER_PORT;
-    } else {
-        // Android >= 11
-        // Contrary to the other methods, this does not suspend on start.
-        // <https://github.com/Genymobile/scrcpy/pull/5466>
-        dbg = "-XjdwpProvider:adbconnection";
+        const char *dbg;
+        if (sdk_version < 28) {
+            // Android < 9
+            dbg = "-agentlib:jdwp=transport=dt_socket,suspend=y,server=y,"
+                  "address=" SERVER_DEBUGGER_PORT;
+        } else if (sdk_version < 30) {
+            // Android >= 9 && Android < 11
+            dbg = "-XjdwpProvider:internal -XjdwpOptions:transport=dt_socket,"
+                  "suspend=y,server=y,address=" SERVER_DEBUGGER_PORT;
+        } else {
+            // Android >= 11
+            // Contrary to the other methods, this does not suspend on start.
+            // <https://github.com/Genymobile/scrcpy/pull/5466>
+            dbg = "-XjdwpProvider:adbconnection";
+        }
+        cmd[count++] = dbg;
     }
-    cmd[count++] = dbg;
 #endif
 
-    cmd[count++] = "/"; // unused
-    cmd[count++] = "com.genymobile.scrcpy.Server";
+    if (!is_linux) {
+        cmd[count++] = "/"; // unused
+        cmd[count++] = "com.genymobile.scrcpy.Server";
+    }
     cmd[count++] = SCRCPY_VERSION;
 
     unsigned dyn_idx = count; // from there, the strings are allocated
@@ -1052,7 +1117,26 @@ run_server(void *data) {
     assert(serial);
     LOGD("Device serial: %s", serial);
 
-    ok = push_server(&server->intr, serial);
+    ok = sc_server_detect_device_os(server, serial);
+    if (!ok) {
+        goto error_connection_failed;
+    }
+    if (server->device_os == SC_DEVICE_OS_LINUX) {
+        if (params->list) {
+            LOGE("--list-* is not supported on Linux devices");
+            goto error_connection_failed;
+        }
+        if (!params->video) {
+            LOGE("--no-video is not supported on Linux devices");
+            goto error_connection_failed;
+        }
+        if (params->video_source == SC_VIDEO_SOURCE_CAMERA) {
+            LOGE("Camera mirroring is not supported on Linux devices");
+            goto error_connection_failed;
+        }
+    }
+
+    ok = push_server(&server->intr, serial, server->device_os);
     if (!ok) {
         goto error_connection_failed;
     }
